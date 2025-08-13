@@ -3,46 +3,70 @@ name: CI/CD to Cloud Run (OIDC)
 on:
   pull_request:
     branches: [ "main" ]
-    types: [closed]   # solo cuando el PR se cierra (mergeado o no)
+    types: [closed]   # solo cuando el PR se cierra
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   deploy:
-    if: github.event.pull_request.merged == true   # solo si fue mergeado
+    if: github.event.pull_request.merged == true    # solo si fue MERGE (no “closed” sin merge)
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
 
-    steps:
-      - uses: actions/checkout@v4
+    env:
+      APP_DIR: sendemail
+      IMAGE: ${{ vars.IMAGE || 'microservicios' }}
 
-      - uses: actions/setup-java@v4
+    steps:
+      - name: Checkout merged main
+        uses: actions/checkout@v4
+        with:
+          ref: main     # asegura construir lo que quedó en main tras el merge
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
 
+      - name: Build & Test (Maven)
+        working-directory: ${{ env.APP_DIR }}
+        run: mvn -B -DskipTests=false test package
+
       - name: Auth via Workload Identity Federation
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Install gcloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
 
       - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
+        run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
 
       - name: Build & Push image
         run: |
-          IMAGE_URI=${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicios/${{ secrets.CLOUD_RUN_SERVICE }}:${{ github.sha }}
-          docker build -t $IMAGE_URI sendemail
+          IMAGE_URI=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ env.IMAGE }}/${{ vars.CLOUD_RUN_SERVICE }}:${{ github.sha }}
+          # si el Dockerfile está en sendemail/, usa ese contexto
+          docker build -t $IMAGE_URI ${{ env.APP_DIR }}
           docker push $IMAGE_URI
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
       - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy ${{ secrets.CLOUD_RUN_SERVICE }} \
+          gcloud run deploy ${{ vars.CLOUD_RUN_SERVICE }} \
             --image $IMAGE_URI \
-            --region ${{ secrets.GCP_REGION }} \
+            --region ${{ vars.GCP_REGION }} \
+            --platform managed \
             --allow-unauthenticated \
-            --cpu=1 --memory=512Mi --max-instances=1 \
-            --set-env-vars MAIL_USER=${{ secrets.MAIL_USER }},MAIL_PASSWORD=${{ secrets.MAIL_PASSWORD }},EMAIL_DESTINATION=${{ vars.EMAIL_DESTINATION }} \
+            --cpu 1 --memory 512Mi --max-instances 1 --concurrency 80 \
+            --set-env-vars MAIL_USER=${{ secrets.MAIL_USER }},MAIL_PASSWORD=${{ secrets.MAIL_PASSWORD }},MAIL_USER=${{ secrets.MAIL_USERNAME }},EMAIL_DESTINATION=${{ vars.EMAIL_DESTINATION }} \
+            --set-env-vars JAVA_TOOL_OPTIONS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=70" \
             --port 8080
