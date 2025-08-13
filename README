@@ -1,0 +1,233 @@
+SenderEmail — Microservicio de envío de correos con Gmail SMTP (Spring Boot)
+Servicio REST para envío de emails usando Gmail SMTP. Incluye buenas prácticas de arquitectura, manejo de errores JSON, y lineamientos para mTLS entre Gateway y microservicio. Opcionalmente, puede protegerse con OAuth2 (PKCE) en el Gateway.
+
+🚀 Stack
+Java 17
+
+Spring Boot 3.5.x
+
+spring-boot-starter-web
+
+spring-boot-starter-mail
+
+(opcional) spring-boot-starter-oauth2-resource-server
+
+Maven
+
+📁 Estructura recomendada
+swift
+
+
+src/main/java/com/email/sendemail/
+  controller/
+    EmailController.java
+  dto/
+    EmailRequest.java
+    ApiResponse.java
+  exception/
+    EmailSendException.java
+    GlobalExceptionHandler.java
+  service/
+    EmailService.java
+resources/
+  application.properties
+  (opcional) certs/  # *.p12 para mTLS (NO commitear)
+🔐 Requisitos de Gmail (SMTP)
+Activar 2FA en la cuenta.
+
+Crear Contraseña de Aplicación (App Password) para “Correo”.
+
+Usar la clave de 16 caracteres sin espacios:
+
+Si Google muestra abcd efgh ijkl mnop → usar abcdefghijklmnop.
+
+Importante: No uses la contraseña normal de Gmail; siempre App Password.
+
+⚙️ Configuración (application.properties)
+properties
+
+
+server.port=8080
+
+# Gmail SMTP
+spring.mail.host=smtp.gmail.com
+spring.mail.port=587
+spring.mail.username=tu_cuenta@gmail.com
+spring.mail.password=abcdefghijklmnop
+spring.mail.properties.mail.smtp.auth=true
+spring.mail.properties.mail.smtp.starttls.enable=true
+spring.mail.default-encoding=UTF-8
+Variables de entorno (recomendado)
+En producción, evita hardcodear secretos:
+
+properties
+
+
+spring.mail.username=${MAIL_USERNAME}
+spring.mail.password=${MAIL_PASSWORD}
+🧩 Endpoints
+POST /api/email/send
+Envia un correo de texto plano.
+
+Request body
+
+json
+
+
+{
+  "to": "destinatario@dominio.com",
+  "subject": "Asunto de prueba",
+  "body": "Contenido del mensaje"
+}
+Response (200)
+
+json
+
+
+{
+  "success": true,
+  "message": "Email enviado correctamente"
+}
+Errores (JSON siempre)
+
+json
+
+
+{
+  "success": false,
+  "message": "Error enviando email: Authentication failed"
+}
+🧠 Manejo global de errores (JSON)
+@RestControllerAdvice captura excepciones y responde en un formato uniforme:
+
+EmailSendException → 500 con mensaje detallado.
+
+Exception genérica → 500 con mensaje estándar.
+
+El handshake TLS fallido (mTLS) ocurre antes de llegar al controller; en ese caso no hay JSON (es fallo de capa de transporte).
+
+🛠️ Ejecución local
+bash
+
+
+# Compilar y ejecutar:
+./mvnw spring-boot:run
+
+# Probar con curl:
+curl -X POST http://localhost:8080/api/email/send \
+  -H "Content-Type: application/json" \
+  -d '{"to":"destinatario@gmail.com","subject":"Hola","body":"Mensaje de prueba"}'
+🔒 mTLS entre Gateway y Email Service (recomendado)
+Objetivo: El Email Service solo acepta conexiones del Gateway (o de quien tenga un certificado cliente válido). El Gateway es público sin mTLS entrante, pero habla con mTLS hacia el Email Service.
+
+Email Service (application.properties)
+properties
+
+
+server.port=8443
+server.ssl.enabled=true
+
+# Keystore del SERVIDOR (cert+llave)
+server.ssl.key-store=classpath:certs/email-server.p12
+server.ssl.key-store-type=PKCS12
+server.ssl.key-store-password=changeit
+server.ssl.key-alias=email-server
+
+# Exigir cert de CLIENTE (mTLS)
+server.ssl.client-auth=need
+
+# Truststore con la CA que firmó el cert CLIENTE del Gateway
+server.ssl.trust-store=classpath:certs/email-truststore.p12
+server.ssl.trust-store-type=PKCS12
+server.ssl.trust-store-password=changeit
+Spring Cloud Gateway (application.yml)
+yaml
+
+
+server:
+  port: 8443
+  ssl:
+    enabled: true
+    key-store: classpath:certs/gateway-server.p12
+    key-store-type: PKCS12
+    key-store-password: changeit
+    client-auth: none   # público sin mTLS de entrada
+
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: email-service
+          uri: https://email-svc.local:8443
+          predicates:
+            - Path=/api/email/**
+      httpclient:
+        ssl:
+          # mTLS del Gateway -> Email Service
+          key-store: classpath:certs/gateway-client.p12
+          key-store-type: PKCS12
+          key-store-password: changeit
+          trust-store: classpath:certs/upstream-truststore.p12
+          trust-store-type: PKCS12
+          trust-store-password: changeit
+          useInsecureTrustManager: false
+
+🧪 Pruebas
+SMTP: valida App Password y spring.mail.username exacto.
+
+Gateway público: probar /api/email/send sin token (debe rechazar si activaste OAuth2).
+
+mTLS directo: llamar al Email Service sin cert → handshake falla.
+
+Postman → Email Service directo: cargar client.p12 para probar acceso mTLS.
+
+🧯 Troubleshooting rápido
+Authentication failed (535 5.7.8 BadCredentials)
+
+App Password incorrecta o con espacios.
+
+spring.mail.username no corresponde a la cuenta que generó la App Password.
+
+2FA no activado en la cuenta → no sirve App Password.
+
+Handshake TLS falla
+
+Cert cliente no firmado por la CA del truststore del servidor.
+
+Falta SAN en el cert del servidor.
+
+Password/rutas de keystore/truststore incorrectas.
+
+No obtengo JSON de error
+
+Si falla TLS, el request no llega al controller (no aplica @ControllerAdvice).
+
+📦 Build & Deploy
+bash
+
+
+# Build
+./mvnw clean package
+
+# Jar
+java -jar target/sendemail-0.0.1-SNAPSHOT.jar
+Producción
+
+Secretos por variables de entorno o Vault.
+
+Montar keystores/truststores como Secrets.
+
+
+📏 Límites de Gmail (referencia)
+Envios diarios (cuenta personal): ~500 destinatarios/día.
+
+Destinatarios por correo: hasta 100 (To+Cc+Bcc).
+
+Tamaño máx. mensaje: 25 MB.
+
+Para volumen alto, evaluar Google Workspace o servicios como SES/SendGrid/Mailgun.
+
+
+
+📄 Licencia
+Uso interno.

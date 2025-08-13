@@ -1,0 +1,5 @@
+{"properties": [{
+  "name": "email.destination",
+  "type": "java.lang.String",
+  "description": "Email generico de destino para el contacto de la plataforma SPA de Portafolio'"
+}]}
