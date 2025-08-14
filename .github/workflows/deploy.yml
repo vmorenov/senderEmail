@@ -1,9 +1,8 @@
 name: CI/CD to Cloud Run (OIDC)
 
 on:
-  pull_request:
-    branches: [ "main" ]
-    types: [ closed ]
+  push:
+    branches: [ "main" ]   # se ejecuta al hacer merge a main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -11,28 +10,19 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
-    # 👇 MUY IMPORTANTE: debe coincidir EXACTO con el nombre del Environment
-    environment: "Configure ENV"
+      deployments: write
+    environment:
+      name: Configure ENV   # 👈 EXACTAMENTE como se llama tu Environment
 
     steps:
-      - name: Checkout merged main
+      - name: Checkout main
         uses: actions/checkout@v4
-        with:
-          ref: main
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "21"
-
-      # (Opcional) Debug para validar que sí llegaron las vars del Environment
-      - name: Debug env vars
+      - name: Debug env vars (deberían venir con valores)
         run: |
           echo "PROJECT_ID='${{ vars.GCP_PROJECT_ID }}'"
           echo "REGION='${{ vars.GCP_REGION }}'"
@@ -41,10 +31,17 @@ jobs:
           echo "CLOUD_RUN_SERVICE='${{ vars.CLOUD_RUN_SERVICE }}'"
           echo "IMAGE(var)='${{ vars.IMAGE }}'"
 
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Build & Test (Maven)
         run: mvn -B -DskipTests=false test package
 
-      - name: Auth via Workload Identity Federation
+      - id: auth
+        name: Auth via Workload Identity Federation
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -62,7 +59,7 @@ jobs:
         shell: bash
         run: |
           IMAGE_REPO="${{ vars.IMAGE }}"
-          : "${IMAGE_REPO:=microservicios}"   # default si vars.IMAGE viene vacío
+          : "${IMAGE_REPO:=microservicios}"   # default si no definiste IMAGE en el Environment
           IMAGE_URI="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${IMAGE_REPO}/${{ vars.CLOUD_RUN_SERVICE }}:${{ github.sha }}"
           docker build -t "$IMAGE_URI" .
           docker push "$IMAGE_URI"
@@ -76,6 +73,6 @@ jobs:
             --platform managed \
             --allow-unauthenticated \
             --cpu 1 --memory 512Mi --max-instances 1 --concurrency 80 \
-            --set-env-vars MAIL_USER=${{ secrets.MAIL_USER }},MAIL_PASSWORD=${{ secrets.MAIL_PASSWORD }},EMAIL_DESTINATION=${{ secrets.EMAIL_DESTINATION }} \
+            --set-env-vars MAIL_USER=${{ secrets.MAIL_USER }},MAIL_PASSWORD=${{ secrets.MAIL_PASSWORD }},EMAIL_DESTINATION=${{ secrets.MAIL_DESTINATION }} \
             --set-env-vars JAVA_TOOL_OPTIONS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=70" \
             --port 8080
