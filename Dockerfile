@@ -1,16 +1,20 @@
-# ===== Build =====
-FROM eclipse-temurin:21-jdk AS build
-WORKDIR /app
-COPY . .
-# Maven:
-RUN ./mvnw -q -DskipTests package
-# (si usas Gradle, reemplaza por:)
-# RUN ./gradlew -q clean bootJar
+# ====== Etapa de build ======
+FROM maven:3.9.9-eclipse-temurin-21 AS build
+WORKDIR /workspace/app
 
-# ===== Runtime =====
+# Copia solo lo necesario para cachear dependencias
+COPY pom.xml .
+RUN mvn -q -e -DskipTests dependency:go-offline
+
+# Copia el código y compila
+COPY src ./src
+RUN mvn -q -e -DskipTests package
+
+# ====== Etapa de runtime ======
 FROM eclipse-temurin:21-jre
-ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -Dserver.port=8080"
 WORKDIR /app
-COPY --from=build /app/target/*.jar app.jar
+# Copia el jar construido
+COPY --from=build /workspace/app/target/*-SNAPSHOT.jar app.jar
+# Si tu jar no es SNAPSHOT, usa: COPY --from=build /workspace/app/target/*.jar app.jar
 EXPOSE 8080
-ENTRYPOINT ["sh","-c","java $JAVA_OPTS -jar app.jar"]
+ENTRYPOINT ["java","-jar","/app/app.jar"]
