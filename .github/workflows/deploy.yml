@@ -3,7 +3,7 @@ name: CI/CD to Cloud Run (OIDC)
 on:
   pull_request:
     branches: [ "main" ]
-    types: [ closed ]   # cuando el PR se cierra
+    types: [ closed ]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -16,9 +16,8 @@ jobs:
     permissions:
       id-token: write
       contents: read
-
-    env:
-      IMAGE: ${{ vars.IMAGE || 'microservicios' }}
+    # 👇 MUY IMPORTANTE: debe coincidir EXACTO con el nombre del Environment
+    environment: "Configure ENV"
 
     steps:
       - name: Checkout merged main
@@ -31,6 +30,16 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
+
+      # (Opcional) Debug para validar que sí llegaron las vars del Environment
+      - name: Debug env vars
+        run: |
+          echo "PROJECT_ID='${{ vars.GCP_PROJECT_ID }}'"
+          echo "REGION='${{ vars.GCP_REGION }}'"
+          echo "SA='${{ vars.GCP_SERVICE_ACCOUNT }}'"
+          echo "WIF='${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}'"
+          echo "CLOUD_RUN_SERVICE='${{ vars.CLOUD_RUN_SERVICE }}'"
+          echo "IMAGE(var)='${{ vars.IMAGE }}'"
 
       - name: Build & Test (Maven)
         run: mvn -B -DskipTests=false test package
@@ -50,20 +59,23 @@ jobs:
         run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
 
       - name: Build & Push image
+        shell: bash
         run: |
-          IMAGE_URI=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ env.IMAGE }}/${{ vars.CLOUD_RUN_SERVICE }}:${{ github.sha }}
-          docker build -t $IMAGE_URI .
-          docker push $IMAGE_URI
-          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+          IMAGE_REPO="${{ vars.IMAGE }}"
+          : "${IMAGE_REPO:=microservicios}"   # default si vars.IMAGE viene vacío
+          IMAGE_URI="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${IMAGE_REPO}/${{ vars.CLOUD_RUN_SERVICE }}:${{ github.sha }}"
+          docker build -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
+          echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
 
       - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy ${{ vars.CLOUD_RUN_SERVICE }} \
-            --image $IMAGE_URI \
-            --region ${{ vars.GCP_REGION }} \
+          gcloud run deploy "${{ vars.CLOUD_RUN_SERVICE }}" \
+            --image "$IMAGE_URI" \
+            --region "${{ vars.GCP_REGION }}" \
             --platform managed \
             --allow-unauthenticated \
             --cpu 1 --memory 512Mi --max-instances 1 --concurrency 80 \
-            --set-env-vars MAIL_USERNAME=${{secrets.MAIL_USER}},MAIL_PASSWORD=${{secrets.MAIL_PASSWORD}},EMAIL_DESTINATION=${{secrets.EMAIL_DESTINATION}} \
+            --set-env-vars MAIL_USER=${{ secrets.MAIL_USER }},MAIL_PASSWORD=${{ secrets.MAIL_PASSWORD }},EMAIL_DESTINATION=${{ secrets.EMAIL_DESTINATION }} \
             --set-env-vars JAVA_TOOL_OPTIONS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=70" \
             --port 8080
