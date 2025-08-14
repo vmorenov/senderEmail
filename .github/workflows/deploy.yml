@@ -3,7 +3,7 @@ name: CI/CD to Cloud Run (OIDC)
 on:
   pull_request:
     branches: [ "main" ]
-    types: [closed]   # solo cuando el PR se cierra
+    types: [ closed ]   # cuando el PR se cierra
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -11,21 +11,20 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.event.pull_request.merged == true    # solo si fue MERGE (no “closed” sin merge)
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
 
     env:
-      APP_DIR: sendemail
       IMAGE: ${{ vars.IMAGE || 'microservicios' }}
 
     steps:
       - name: Checkout merged main
         uses: actions/checkout@v4
         with:
-          ref: main     # asegura construir lo que quedó en main tras el merge
+          ref: main
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -34,7 +33,6 @@ jobs:
           java-version: "21"
 
       - name: Build & Test (Maven)
-        working-directory: ${{ env.APP_DIR }}
         run: mvn -B -DskipTests=false test package
 
       - name: Auth via Workload Identity Federation
@@ -54,8 +52,7 @@ jobs:
       - name: Build & Push image
         run: |
           IMAGE_URI=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ env.IMAGE }}/${{ vars.CLOUD_RUN_SERVICE }}:${{ github.sha }}
-          # si el Dockerfile está en sendemail/, usa ese contexto
-          docker build -t $IMAGE_URI ${{ env.APP_DIR }}
+          docker build -t $IMAGE_URI .
           docker push $IMAGE_URI
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
@@ -67,6 +64,6 @@ jobs:
             --platform managed \
             --allow-unauthenticated \
             --cpu 1 --memory 512Mi --max-instances 1 --concurrency 80 \
-            --set-env-vars MAIL_USER=${{ secrets.MAIL_USER }},MAIL_PASSWORD=${{ secrets.MAIL_PASSWORD }},MAIL_USER=${{ secrets.MAIL_USERNAME }},EMAIL_DESTINATION=${{ vars.EMAIL_DESTINATION }} \
+            --set-env-vars MAIL_USERNAME=${{secrets.MAIL_USER}},MAIL_PASSWORD=${{secrets.MAIL_PASSWORD}},EMAIL_DESTINATION=${{secrets.EMAIL_DESTINATION}} \
             --set-env-vars JAVA_TOOL_OPTIONS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=70" \
             --port 8080
