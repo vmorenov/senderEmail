@@ -1,23 +1,23 @@
-SenderEmail — Microservicio de envío de correos con Gmail SMTP (Spring Boot)
-Servicio REST para envío de emails usando Gmail SMTP. Incluye buenas prácticas de arquitectura, manejo de errores JSON, y lineamientos para mTLS entre Gateway y microservicio. Opcionalmente, puede protegerse con OAuth2 (PKCE) en el Gateway.
+# SenderEmail — Microservicio de envío de correos (Gmail SMTP + Spring Boot)
 
-🚀 Stack
-Java 17
+Servicio REST para envío de emails mediante **Gmail SMTP**. Incluye buenas prácticas de arquitectura, manejo de errores JSON uniforme, lineamientos para **mTLS entre Gateway y microservicio**, y opción de proteger por **OAuth2 (PKCE)** a nivel de Gateway.
 
-Spring Boot 3.5.x
+---
 
-spring-boot-starter-web
+## 🚀 Stack
 
-spring-boot-starter-mail
+* **Java 17**
+* **Spring Boot 3.5.x**
+* `spring-boot-starter-web`
+* `spring-boot-starter-mail`
+* *(opcional)* `spring-boot-starter-oauth2-resource-server`
+* **Maven**
 
-(opcional) spring-boot-starter-oauth2-resource-server
+---
 
-Maven
+## 📁 Estructura recomendada
 
-📁 Estructura recomendada
-swift
-
-
+```
 src/main/java/com/email/sendemail/
   controller/
     EmailController.java
@@ -31,99 +31,205 @@ src/main/java/com/email/sendemail/
     EmailService.java
 resources/
   application.properties
-  (opcional) certs/  # *.p12 para mTLS (NO commitear)
-🔐 Requisitos de Gmail (SMTP)
-Activar 2FA en la cuenta.
+  (opcional) certs/       # *.p12 para mTLS (NO commitear)
+```
 
-Crear Contraseña de Aplicación (App Password) para “Correo”.
+---
 
-Usar la clave de 16 caracteres sin espacios:
+## 🔐 Requisitos de Gmail (SMTP)
 
-Si Google muestra abcd efgh ijkl mnop → usar abcdefghijklmnop.
+1. **Activa 2FA** en la cuenta.
+2. **Crea una App Password** para “Correo”.
+3. **Usa la clave de 16 caracteres sin espacios** (ej.: `abcdefghijklmnop`).
 
-Importante: No uses la contraseña normal de Gmail; siempre App Password.
+> Importante: No uses la contraseña normal de Gmail; siempre **App Password**.
 
-⚙️ Configuración (application.properties)
-properties
+---
 
+## ⚙️ Configuración
 
+### `application.properties` (mínimo)
+
+```properties
 server.port=8080
 
 # Gmail SMTP
 spring.mail.host=smtp.gmail.com
 spring.mail.port=587
-spring.mail.username=tu_cuenta@gmail.com
-spring.mail.password=abcdefghijklmnop
+spring.mail.username=${MAIL_USERNAME}
+spring.mail.password=${MAIL_PASSWORD}
 spring.mail.properties.mail.smtp.auth=true
 spring.mail.properties.mail.smtp.starttls.enable=true
 spring.mail.default-encoding=UTF-8
-Variables de entorno (recomendado)
-En producción, evita hardcodear secretos:
+```
 
-properties
+### Variables de entorno (recomendado en PROD)
 
+| Variable                 | Requerida | Ejemplo               | Descripción           |
+| ------------------------ | --------- | --------------------- | --------------------- |
+| `MAIL_USERNAME`          | ✅         | `tu_cuenta@gmail.com` | Cuenta de envío       |
+| `MAIL_PASSWORD`          | ✅         | `abcdefghijklmnop`    | App Password de Gmail |
+| `SERVER_PORT`            | ❌         | `8080`                | Puerto del servicio   |
+| `SPRING_PROFILES_ACTIVE` | ❌         | `prod`                | Perfil de ejecución   |
 
-spring.mail.username=${MAIL_USERNAME}
-spring.mail.password=${MAIL_PASSWORD}
-🧩 Endpoints
-POST /api/email/send
-Envia un correo de texto plano.
+> Mantén los secretos en variables de entorno o un vault. **No** los hardcodees ni los commitees.
 
-Request body
+### `.env.example`
 
-json
+```
+MAIL_USERNAME=tu_cuenta@gmail.com
+MAIL_PASSWORD=abcdefghijklmnop
+SERVER_PORT=8080
+SPRING_PROFILES_ACTIVE=dev
+```
 
+---
 
+## 🧩 API
+
+### POST `/api/email/send`
+
+**Descripción:** Enviar correo de texto plano.
+
+**Request Body**
+
+```json
 {
   "to": "destinatario@dominio.com",
   "subject": "Asunto de prueba",
   "body": "Contenido del mensaje"
 }
-Response (200)
+```
 
-json
+**Response (200)**
 
+```json
+{ "success": true, "message": "Email enviado correctamente" }
+```
 
-{
-  "success": true,
-  "message": "Email enviado correctamente"
-}
-Errores (JSON siempre)
+**Errores (JSON uniforme)**
 
-json
+```json
+{ "success": false, "message": "Error enviando email: Authentication failed" }
+```
 
+> El **handshake TLS fallido (mTLS)** ocurre antes de llegar al controller; en ese caso **no hay JSON** (falla de transporte).
 
+---
+
+## 🧠 Manejo global de errores
+
+`@RestControllerAdvice` captura excepciones y responde con un formato uniforme:
+
+* `EmailSendException` → `500` con mensaje detallado.
+* `Exception` genérica → `500` con mensaje estándar.
+
+*(Opcional)* Estructura enriquecida de error:
+
+```json
 {
   "success": false,
-  "message": "Error enviando email: Authentication failed"
+  "code": "SMTP_AUTH_FAILED",
+  "message": "Authentication failed",
+  "path": "/api/email/send",
+  "timestamp": "2025-08-19T10:35:00Z"
 }
-🧠 Manejo global de errores (JSON)
-@RestControllerAdvice captura excepciones y responde en un formato uniforme:
+```
 
-EmailSendException → 500 con mensaje detallado.
+---
 
-Exception genérica → 500 con mensaje estándar.
+## 🛠️ Ejecución local
 
-El handshake TLS fallido (mTLS) ocurre antes de llegar al controller; en ese caso no hay JSON (es fallo de capa de transporte).
+```bash
+# Compilar y ejecutar\./mvnw spring-boot:run
 
-🛠️ Ejecución local
-bash
-
-
-# Compilar y ejecutar:
-./mvnw spring-boot:run
-
-# Probar con curl:
+# Probar con curl
 curl -X POST http://localhost:8080/api/email/send \
   -H "Content-Type: application/json" \
   -d '{"to":"destinatario@gmail.com","subject":"Hola","body":"Mensaje de prueba"}'
-🔒 mTLS entre Gateway y Email Service (recomendado)
-Objetivo: El Email Service solo acepta conexiones del Gateway (o de quien tenga un certificado cliente válido). El Gateway es público sin mTLS entrante, pero habla con mTLS hacia el Email Service.
+```
 
-Email Service (application.properties)
-properties
+---
 
+## 🐳 Docker (opcional)
 
+**Dockerfile** (ejemplo multi-stage)
+
+```dockerfile
+# ===== Build =====
+FROM eclipse-temurin:17-jdk AS build
+WORKDIR /app
+COPY . .
+RUN ./mvnw -q -DskipTests clean package
+
+# ===== Run =====
+FROM eclipse-temurin:17-jre
+WORKDIR /app
+COPY --from=build /app/target/sendemail-*.jar app.jar
+
+# Usa variables de entorno en runtime
+ENV SERVER_PORT=8080
+EXPOSE 8080
+ENTRYPOINT ["java","-jar","/app/app.jar"]
+```
+
+**.dockerignore**
+
+```
+.git
+.target
+.cert
+certs/
+.env
+```
+
+**Build & Run**
+
+```bash
+docker build -t sender-email:latest .
+
+docker run --env-file .env -p 8080:8080 sender-email:latest
+```
+
+---
+
+## ✉️ Desarrollo local sin cuotas (MailHog opcional)
+
+Para evitar límites de Gmail en desarrollo, puedes utilizar **MailHog**:
+
+**docker-compose.mailhog.yml**
+
+```yaml
+services:
+  mailhog:
+    image: mailhog/mailhog:latest
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # UI
+```
+
+**application-dev.properties**
+
+```properties
+spring.mail.host=localhost
+spring.mail.port=1025
+spring.mail.username=
+spring.mail.password=
+spring.mail.properties.mail.smtp.auth=false
+spring.mail.properties.mail.smtp.starttls.enable=false
+```
+
+UI: `http://localhost:8025` (ver correos capturados).
+
+---
+
+## 🔒 mTLS entre Gateway y Email Service (recomendado)
+
+**Objetivo:** El Email Service solo acepta conexiones del Gateway (o de quien tenga un cert cliente válido). El Gateway es público sin mTLS entrante, pero habla con mTLS hacia el Email Service.
+
+### Email Service (`application.properties`)
+
+```properties
 server.port=8443
 server.ssl.enabled=true
 
@@ -140,10 +246,11 @@ server.ssl.client-auth=need
 server.ssl.trust-store=classpath:certs/email-truststore.p12
 server.ssl.trust-store-type=PKCS12
 server.ssl.trust-store-password=changeit
-Spring Cloud Gateway (application.yml)
-yaml
+```
 
+### Spring Cloud Gateway (`application.yml`)
 
+```yaml
 server:
   port: 8443
   ssl:
@@ -151,7 +258,7 @@ server:
     key-store: classpath:certs/gateway-server.p12
     key-store-type: PKCS12
     key-store-password: changeit
-    client-auth: none   # público sin mTLS de entrada
+    client-auth: none   # público sin mTLS entrante
 
 spring:
   cloud:
@@ -171,63 +278,132 @@ spring:
           trust-store-type: PKCS12
           trust-store-password: changeit
           useInsecureTrustManager: false
+```
 
-🧪 Pruebas
-SMTP: valida App Password y spring.mail.username exacto.
+### Generación de certificados (guía rápida)
 
-Gateway público: probar /api/email/send sin token (debe rechazar si activaste OAuth2).
+```bash
+# Servidor (keystore PKCS12)
+keytool -genkeypair -alias email-server -keyalg RSA -keysize 2048 \
+  -dname "CN=email-svc.local, OU=IT, O=Acme, L=SCL, ST=RM, C=CL" \
+  -storetype PKCS12 -keystore email-server.p12 -storepass changeit -keypass changeit
 
-mTLS directo: llamar al Email Service sin cert → handshake falla.
+# Cliente Gateway (keystore PKCS12)
+keytool -genkeypair -alias gateway-client -keyalg RSA -keysize 2048 \
+  -dname "CN=gateway, OU=IT, O=Acme, L=SCL, ST=RM, C=CL" \
+  -storetype PKCS12 -keystore gateway-client.p12 -storepass changeit -keypass changeit
 
-Postman → Email Service directo: cargar client.p12 para probar acceso mTLS.
+# (Opcional) Exportar cert público para truststores
+keytool -export -alias gateway-client -keystore gateway-client.p12 -storepass changeit -rfc -file gateway-client.crt
+keytool -importcert -alias gateway-client -file gateway-client.crt -keystore email-truststore.p12 -storepass changeit -storetype PKCS12 -noprompt
+```
 
-🧯 Troubleshooting rápido
-Authentication failed (535 5.7.8 BadCredentials)
+> No subas `certs/*.p12` al repo. Móntalos como **Secrets** o **volúmenes** en despliegue.
 
-App Password incorrecta o con espacios.
+---
 
-spring.mail.username no corresponde a la cuenta que generó la App Password.
+## 🔑 OAuth2 en Gateway (PKCE)
 
-2FA no activado en la cuenta → no sirve App Password.
+* El Gateway expone `/oauth2/authorize` con **PKCE** (Auth Code + Proof Key).
+* El Email Service **no** es un resource server obligatorio, pero puede serlo si validas JWT en backend.
 
-Handshake TLS falla
+**Habilitar Resource Server (opcional)**
 
-Cert cliente no firmado por la CA del truststore del servidor.
+```xml
+<!-- pom.xml -->
+<dependency>
+  <groupId>org.springframework.boot</groupId>
+  <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+</dependency>
+```
 
-Falta SAN en el cert del servidor.
+```properties
+# Validación de JWT vía JWK
+spring.security.oauth2.resourceserver.jwt.jwk-set-uri=https://issuer.example.com/.well-known/jwks.json
+```
 
-Password/rutas de keystore/truststore incorrectas.
+---
 
-No obtengo JSON de error
+## 🩺 Observabilidad
 
-Si falla TLS, el request no llega al controller (no aplica @ControllerAdvice).
+**Actuator** (estado y métricas):
 
-📦 Build & Deploy
-bash
+```xml
+<dependency>
+  <groupId>org.springframework.boot</groupId>
+  <artifactId>spring-boot-starter-actuator</artifactId>
+</dependency>
+```
 
+```properties
+management.endpoints.web.exposure.include=health,info,prometheus
+management.endpoint.health.probes.enabled=true
+```
 
+* **/actuator/health** → liveness/readiness
+* **/actuator/prometheus** → scrap por Prometheus (si se requiere)
+
+**Logging**: usa `logback-spring.xml` con niveles por paquete y MDC para trazabilidad (correlation-id).
+
+---
+
+## 🧪 Pruebas
+
+* **SMTP**: verifica App Password y `spring.mail.username`.
+* **Gateway público**: si activas OAuth2, prueba que `/api/email/send` rechace sin token.
+* **mTLS**: llamada directa al Email Service sin cert cliente → handshake falla.
+* **Postman**: para mTLS, carga el `client.p12` en la request.
+
+---
+
+## 🧯 Troubleshooting
+
+**Authentication failed (535 5.7.8 BadCredentials)**
+
+* App Password incorrecta / con espacios.
+* `spring.mail.username` no corresponde a la cuenta de la App Password.
+* 2FA no activado → App Password inválida.
+
+**Handshake TLS falla**
+
+* Cert cliente no firmado por la CA del truststore del servidor.
+* Falta **SAN** en el cert del servidor (coincidir host).
+* Password/rutas de keystore/truststore incorrectas.
+
+**No obtengo JSON de error**
+
+* Si falla TLS, el request no llega al controller (no aplica `@ControllerAdvice`).
+
+---
+
+## 📦 Build & Deploy
+
+```bash
 # Build
 ./mvnw clean package
 
-# Jar
+# Ejecutar JAR
 java -jar target/sendemail-0.0.1-SNAPSHOT.jar
-Producción
+```
 
-Secretos por variables de entorno o Vault.
+**Producción**
 
-Montar keystores/truststores como Secrets.
+* Secretos en variables de entorno o **Vault**.
+* Montar keystores/truststores como **Secrets**.
+* Configurar **readiness/liveness** si orquestas en K8s.
 
+---
 
-📏 Límites de Gmail (referencia)
-Envios diarios (cuenta personal): ~500 destinatarios/día.
+## 📏 Límites de Gmail (referencia)
 
-Destinatarios por correo: hasta 100 (To+Cc+Bcc).
+* Envíos diarios (cuenta personal): \~500 destinatarios/día.
+* Destinatarios por correo: hasta 100 (To+Cc+Bcc).
+* Tamaño máx. mensaje: **25 MB**.
 
-Tamaño máx. mensaje: 25 MB.
+Para volumen alto, evaluar **Google Workspace** o servicios de envío transaccional (SES/SendGrid/Mailgun).
 
-Para volumen alto, evaluar Google Workspace o servicios como SES/SendGrid/Mailgun.
+---
 
+## 📄 Licencia
 
-
-📄 Licencia
 Uso interno.
